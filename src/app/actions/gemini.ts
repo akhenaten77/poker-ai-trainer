@@ -5,8 +5,13 @@ import { GameState } from "../../engine/game";
 import { PokerAI } from "../../engine/ai";
 
 const API_KEY = process.env.GEMINI_API_KEY || "";
-const PRIMARY_MODEL = "gemini-2.5-flash-lite";
-const FALLBACK_MODEL = "gemini-2.5-flash";
+
+const MODEL_HIERARCHY = [
+  "gemma-3-27b-it",
+  "gemini-3.1-flash-lite-preview",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash"
+];
 
 // Initialize the AI client
 const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
@@ -23,47 +28,24 @@ async function callGemini(
     return null;
   }
 
-  const generationConfig = {
-    temperature: options.temperature ?? 0.7,
-    maxOutputTokens: options.maxOutputTokens ?? 500,
-  };
-
-  // Attempt 1: Primary Model (Lite)
-  try {
-    const model = ai.getGenerativeModel({ 
-      model: PRIMARY_MODEL.startsWith('models/') ? PRIMARY_MODEL : `models/${PRIMARY_MODEL}` 
-    });
-    
-    console.log(`AI Call [${PRIMARY_MODEL}]...`);
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    
-    if (text) {
-      console.log(`AI Success [${PRIMARY_MODEL}]`);
-      return text;
+  for (const modelId of MODEL_HIERARCHY) {
+    try {
+      const fullModelId = modelId.startsWith('models/') ? modelId : `models/${modelId}`;
+      const model = ai.getGenerativeModel({ model: fullModelId });
+      
+      console.log(`AI Attempt [${modelId}]...`);
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      if (text) {
+        console.log(`AI Success [${modelId}]`);
+        return text;
+      }
+    } catch (error: any) {
+      console.warn(`Model [${modelId}] failed/unavailable:`, error.message);
+      // Continue to next model in hierarchy
     }
-  } catch (error: any) {
-    console.error(`Primary Model [${PRIMARY_MODEL}] error:`, error.message);
-  }
-
-  // Attempt 2: Fallback Model (Standard Flash)
-  try {
-    const model = ai.getGenerativeModel({ 
-      model: FALLBACK_MODEL.startsWith('models/') ? FALLBACK_MODEL : `models/${FALLBACK_MODEL}` 
-    });
-    
-    console.log(`AI Fallback Session [${FALLBACK_MODEL}]...`);
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    
-    if (text) {
-      console.log(`AI Success [${FALLBACK_MODEL}]`);
-      return text;
-    }
-  } catch (error: any) {
-    console.error(`Fallback Model [${FALLBACK_MODEL}] error:`, error.message);
   }
 
   return null;
