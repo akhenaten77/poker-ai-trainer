@@ -106,10 +106,11 @@ export default function PlayPage() {
         </aside>
 
         {/* Main Canvas */}
-        <main className="lg:ml-64 flex-1 relative flex flex-col items-center justify-center p-8 bg-surface-dim">
-          {/* Poker Table */}
-          <div className="relative w-full max-w-5xl aspect-[21/9] poker-felt rounded-[200px] border-[12px] border-[#1C1B1B] neon-rim flex flex-col items-center justify-center">
-            {/* Center Area: Pot & Community Cards */}
+        <main className="lg:ml-64 flex-1 relative flex flex-col items-center p-4 md:p-8 bg-surface-dim overflow-y-auto overflow-x-hidden w-full">
+          <div className="w-full flex flex-col max-w-6xl mx-auto min-h-min justify-center py-10 lg:py-16">
+            {/* Poker Table */}
+            <div className="relative w-full min-h-[400px] sm:min-h-[450px] lg:min-h-[500px] poker-felt rounded-[3rem] sm:rounded-[6rem] lg:rounded-[200px] border-[6px] sm:border-[12px] border-[#1C1B1B] neon-rim flex flex-col items-center justify-center shrink-0 mb-16 sm:mb-24 shadow-2xl">
+              {/* Center Area: Pot & Community Cards */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
               {/* Pot Size */}
               <div className="bg-black/40 backdrop-blur-md px-6 py-2 rounded-full mb-6 border border-primary-container/20 flex flex-col items-center">
@@ -127,23 +128,23 @@ export default function PlayPage() {
 
             {/* Players (Seats) Dynamically positioned */}
             {bots.map((bot, idx) => {
-              // Distribute 4 bots around the table
+              // Distribute 4 bots around the table flexibly
               const positions = [
-                "top-0 left-1/4 -translate-y-1/2", // Bot 1
-                "top-0 right-1/4 -translate-y-1/2", // Bot 2
-                "right-0 top-1/2 translate-x-1/2 -translate-y-1/2", // Bot 3
-                "left-0 top-1/2 -translate-x-1/2 -translate-y-1/2", // Bot 4
+                "top-0 left-[5%] sm:left-[15%] lg:left-[20%] -translate-y-[30%] sm:-translate-y-[40%]", // Bot 1
+                "top-0 right-[5%] sm:right-[15%] lg:right-[20%] -translate-y-[30%] sm:-translate-y-[40%]", // Bot 2
+                "right-0 top-1/2 translate-x-[20%] sm:translate-x-[40%] -translate-y-1/2", // Bot 3
+                "left-0 top-1/2 -translate-x-[20%] sm:-translate-x-[40%] -translate-y-1/2", // Bot 4
               ];
               const isActive = store.currentPlayerIndex === idx + 1;
 
               return (
-                <div key={bot.id} className={`absolute ${positions[idx]} flex flex-col items-center pointer-events-none transition-all ${isActive ? 'scale-110' : ''}`}>
-                  <div className={`bg-surface-container-high rounded-2xl p-2 border ${isActive ? 'border-primary-container shadow-[0_0_15px_rgba(57,255,20,0.4)]' : 'border-outline-variant'} w-28 text-center shadow-lg transition-all`}>
-                    <div className="w-10 h-10 rounded-full bg-surface-container-lowest mx-auto mb-1 border-2 border-surface-dim flex items-center justify-center">
-                      <span className="material-symbols-outlined text-outline-variant">robot_2</span>
+                <div key={bot.id} className={`absolute ${positions[idx]} flex flex-col items-center pointer-events-none transition-all z-10 ${isActive ? 'scale-100 sm:scale-110' : 'scale-85 sm:scale-100'}`}>
+                  <div className={`bg-surface-container-high rounded-2xl p-2 border ${isActive ? 'border-primary-container shadow-[0_0_15px_rgba(57,255,20,0.4)]' : 'border-outline-variant'} w-24 sm:w-28 text-center shadow-lg transition-all`}>
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-surface-container-lowest mx-auto mb-1 border-2 border-surface-dim flex items-center justify-center">
+                      <span className="material-symbols-outlined text-outline-variant text-sm sm:text-base">robot_2</span>
                     </div>
-                    <div className="text-[10px] text-on-surface-variant font-medium uppercase tracking-wider">{bot.name}</div>
-                    <div className="text-xs font-bold text-white">{bot.stack.toFixed(1)} BB</div>
+                    <div className="text-[9px] sm:text-[10px] text-on-surface-variant font-medium uppercase tracking-wider truncate px-1">{bot.name}</div>
+                    <div className="text-[10px] sm:text-xs font-bold text-white">{bot.stack.toFixed(1)} BB</div>
                   </div>
                   {bot.hasFolded ? (
                     <div className="mt-2 bg-error-container text-error px-3 py-1 rounded-full text-[10px] font-bold">FOLDED</div>
@@ -157,9 +158,9 @@ export default function PlayPage() {
             })}
 
             {/* Bottom Center: Hero (User) */}
-            <div className={`absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 flex flex-col items-center z-10 transition-all ${store.currentPlayerIndex === 0 ? 'scale-110' : ''}`}>
+            <div className={`absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-[35%] sm:translate-y-[45%] flex flex-col items-center z-10 transition-all ${store.currentPlayerIndex === 0 ? 'scale-105 sm:scale-110' : 'scale-90 sm:scale-100'}`}>
               {/* Hero Cards */}
-              <div className="flex gap-1 mb-2 relative">
+              <div className="flex gap-1 mb-2 relative scale-90 sm:scale-100">
                 {hero.cards.map((card, i) => (
                    <div key={i} className={`rotate-[${i%2===0?'-4':'4'}deg]`}>
                      <PlayingCard card={card} />
@@ -167,9 +168,9 @@ export default function PlayPage() {
                 ))}
               </div>
               {/* Hero Info */}
-              <div className={`bg-primary-container rounded-2xl p-2 border-4 ${store.currentPlayerIndex === 0 ? 'border-white shadow-[0_0_30px_rgba(57,255,20,0.8)]' : 'border-surface-container-high shadow-2xl'} w-32 text-center transition-all`}>
-                <div className="text-[10px] text-on-primary font-black uppercase tracking-tighter">YOU (HERO)</div>
-                <div className="text-sm font-black text-on-primary">{hero.stack.toFixed(1)} BB</div>
+              <div className={`bg-primary-container rounded-2xl p-2 border-4 ${store.currentPlayerIndex === 0 ? 'border-white shadow-[0_0_30px_rgba(57,255,20,0.8)]' : 'border-surface-container-high shadow-2xl'} w-28 sm:w-32 text-center transition-all`}>
+                <div className="text-[10px] text-on-primary font-black uppercase tracking-tighter truncate">YOU (HERO)</div>
+                <div className="text-xs sm:text-sm font-black text-on-primary">{hero.stack.toFixed(1)} BB</div>
                 <div className="text-[10px] font-bold text-on-primary/70 mt-1 bg-black/10 rounded">Bet: {hero.currentBet}</div>
               </div>
             </div>
@@ -212,10 +213,14 @@ export default function PlayPage() {
              )}
           </div>
 
+            </div>
+            
+            {/* AI Quick Insights logic ends here */}
+
           {/* Bottom Control Panel */}
-          <div className="absolute bottom-6 mx-auto flex flex-col md:flex-row justify-center items-end gap-6 w-full max-w-4xl px-4 pointer-events-auto">
+          <div className="w-full max-w-4xl mx-auto flex flex-col lg:flex-row justify-center items-center lg:items-end gap-6 px-4 z-20 shrink-0 pb-12">
             {/* Bet Sizing */}
-            <div className="bg-[#0e0e0e]/60 backdrop-blur-xl rounded-2xl p-4 flex flex-col gap-3 w-64 border border-outline-variant/20 shadow-2xl shrink-0">
+            <div className="bg-[#0e0e0e]/80 backdrop-blur-xl rounded-2xl p-4 flex flex-col gap-3 w-full sm:w-80 lg:w-64 border border-outline-variant/20 shadow-xl shrink-0">
               <div className="flex justify-between items-center px-1">
                 <span className="text-[10px] text-on-surface-variant uppercase font-bold tracking-widest">Raise / Bet</span>
                 <span className="text-primary-container font-headline font-bold">12.5 BB</span>
@@ -231,17 +236,17 @@ export default function PlayPage() {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex gap-3 items-end pb-1 overflow-x-auto w-full md:w-auto p-1">
-              <button onClick={() => handleAction('FOLD')} disabled={store.currentPlayerIndex !== 0} className="disabled:opacity-50 px-6 md:px-8 py-4 bg-surface-container-high text-on-surface font-headline font-bold rounded-2xl border border-outline-variant transition-all uppercase tracking-widest text-xs md:text-sm">
+            <div className="flex flex-wrap justify-center gap-2 sm:gap-3 items-center lg:items-end w-full lg:w-auto p-1">
+              <button onClick={() => handleAction('FOLD')} disabled={store.currentPlayerIndex !== 0} className="disabled:opacity-50 flex-1 sm:flex-none min-w-[80px] px-4 sm:px-8 py-3 sm:py-4 bg-surface-container-high text-on-surface font-headline font-bold rounded-2xl border border-outline-variant transition-all uppercase tracking-widest text-xs lg:text-sm shadow-md hover:bg-surface-container-highest">
                 Fold
               </button>
-              <button onClick={() => handleAction('CHECK')} disabled={store.currentPlayerIndex !== 0 || currentHighestBet > hero.currentBet} className="disabled:opacity-50 px-6 md:px-8 py-4 bg-surface-container-high text-on-surface font-headline font-bold rounded-2xl border border-outline-variant transition-all uppercase tracking-widest text-xs md:text-sm">
+              <button onClick={() => handleAction('CHECK')} disabled={store.currentPlayerIndex !== 0 || currentHighestBet > hero.currentBet} className="disabled:opacity-50 flex-1 sm:flex-none min-w-[80px] px-4 sm:px-8 py-3 sm:py-4 bg-surface-container-high text-on-surface font-headline font-bold rounded-2xl border border-outline-variant transition-all uppercase tracking-widest text-xs lg:text-sm shadow-md hover:bg-surface-container-highest">
                 Check
               </button>
-              <button onClick={() => handleAction('CALL')} disabled={store.currentPlayerIndex !== 0 || currentHighestBet <= hero.currentBet} className="disabled:opacity-50 px-6 md:px-8 py-4 bg-surface-container-high text-on-surface font-headline font-bold rounded-2xl border border-outline-variant transition-all uppercase tracking-widest text-xs md:text-sm">
-                Call {Math.max(0, currentHighestBet - hero.currentBet)}
+              <button onClick={() => handleAction('CALL')} disabled={store.currentPlayerIndex !== 0 || currentHighestBet <= hero.currentBet} className="disabled:opacity-50 flex-1 sm:flex-none min-w-[80px] px-4 sm:px-8 py-3 sm:py-4 bg-surface-container-high text-on-surface font-headline font-bold rounded-2xl border border-outline-variant transition-all uppercase tracking-widest text-xs lg:text-sm shadow-md hover:bg-surface-container-highest">
+                Call {Math.max(0, currentHighestBet - hero.currentBet) > 0 ? Math.max(0, currentHighestBet - hero.currentBet) : ''}
               </button>
-              <button onClick={() => handleAction('RAISE')} disabled={store.currentPlayerIndex !== 0} className="disabled:opacity-50 px-8 md:px-10 py-4 bg-primary-container text-on-primary font-headline font-black rounded-2xl shadow-[0_0_20px_rgba(57,255,20,0.3)] transition-all uppercase tracking-widest text-xs md:text-sm">
+              <button onClick={() => handleAction('RAISE')} disabled={store.currentPlayerIndex !== 0} className="disabled:opacity-50 w-full sm:w-auto px-8 sm:px-10 py-3 sm:py-4 bg-primary-container text-on-primary font-headline font-black rounded-2xl shadow-[0_0_20px_rgba(57,255,20,0.3)] transition-all uppercase tracking-widest text-xs lg:text-sm hover:brightness-110">
                 Raise
               </button>
             </div>
