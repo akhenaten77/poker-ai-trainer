@@ -111,8 +111,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const players = [...state.players];
     const player = players[state.currentPlayerIndex];
     let { pot, currentHighestBet, minRaise, handHistory } = state;
-    
-    let coachMsg = state.coachMessage;
 
     if (action === 'FOLD') {
       player.hasFolded = true;

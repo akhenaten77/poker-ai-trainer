@@ -11,7 +11,7 @@ export default function PlayPage() {
 
   useEffect(() => {
     // Initialize game with 4 bots and 100BB stack
-    store.initializeGame(4, 100);
+    store.initializeGame("HERO", 5, 2000, "Medium");
   }, []); // Run once on mount
 
   // Auto-Act Loop for Bots
@@ -178,14 +178,14 @@ export default function PlayPage() {
            {/* AI Quick Insights Panel */}
            <div className="absolute right-8 top-24 w-80 flex flex-col gap-4 pointer-events-none hidden xl:flex">
              {/* Coaching Feedback Container */}
-             {store.coachMessage && (
+             {store.coachAdvices.length > 0 && (
                <div className="glass-panel p-4 rounded-2xl border border-[#39FF14]/50 shadow-[0_0_15px_rgba(57,255,20,0.2)] bg-[#0E0E0E]/80 backdrop-blur-xl animate-fade-in">
                  <div className="flex items-center gap-2 mb-1">
                    <span className="material-symbols-outlined text-sm text-[#39FF14]">lightbulb</span>
                    <span className="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">Live Coach</span>
                  </div>
                  <p className="text-xs text-white leading-relaxed">
-                   {store.coachMessage}
+                   {store.coachAdvices[store.coachAdvices.length - 1].text}
                  </p>
                </div>
              )}
