@@ -37,6 +37,7 @@ export interface GameState {
   winners: string[]; // player IDs
   showdownResults: ShowdownResult[]; // populated at end of hand
   handHistory: string[];
+  difficulty: 'Easy' | 'Medium' | 'Hard';
 }
 
 export class PokerEngine {

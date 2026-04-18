@@ -29,11 +29,11 @@ const INITIAL_STATE: GameState = {
   winners: [],
   showdownResults: [],
   handHistory: [],
+  difficulty: 'Medium',
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
   ...INITIAL_STATE,
-  difficulty: 'Medium',
   coachAdvices: [],
   addAdvice: (text, type = 'ADVICE') => set(s => ({ coachAdvices: [...s.coachAdvices, { text, type }] })),
   addLog: (msg) => set(s => ({ handHistory: [...s.handHistory, msg] })),

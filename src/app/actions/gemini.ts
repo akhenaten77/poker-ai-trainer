@@ -66,7 +66,7 @@ export async function getBotDecision(
     'Hard': 'You are a world-class GTO poker professional. Play optimally and exploit every weakness of your opponents.'
   };
 
-  const prompt = `System: ${difficultyPrompts[state.difficulty] || difficultyPrompts.Medium}
+  const prompt = `System: ${difficultyPrompts[state.difficulty as keyof typeof difficultyPrompts] || difficultyPrompts.Medium}
   
 You are a skilled Texas Hold'em poker bot. Decide your action.
 
