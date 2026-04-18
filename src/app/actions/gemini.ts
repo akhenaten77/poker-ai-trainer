@@ -18,30 +18,52 @@ async function callGemini(
   prompt: string, 
   options: { responseMimeType?: string; maxOutputTokens?: number; temperature?: number }
 ): Promise<string | null> {
-  if (!ai) return null;
+  if (!ai) {
+    console.error("Gemini API not initialized (missing API key)");
+    return null;
+  }
+
+  const generationConfig = {
+    temperature: options.temperature ?? 0.7,
+    maxOutputTokens: options.maxOutputTokens ?? 500,
+  };
 
   // Attempt 1: Primary Model (Lite)
   try {
-    const response = await ai.models.generateContent({
-      model: PRIMARY_MODEL,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: options,
+    const model = ai.getGenerativeModel({ 
+      model: PRIMARY_MODEL.startsWith('models/') ? PRIMARY_MODEL : `models/${PRIMARY_MODEL}` 
     });
-    if (response.text) return response.text;
+    
+    console.log(`AI Call [${PRIMARY_MODEL}]...`);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    
+    if (text) {
+      console.log(`AI Success [${PRIMARY_MODEL}]`);
+      return text;
+    }
   } catch (error: any) {
-    console.warn(`Primary Model [${PRIMARY_MODEL}] failed:`, error.message);
+    console.error(`Primary Model [${PRIMARY_MODEL}] error:`, error.message);
   }
 
   // Attempt 2: Fallback Model (Standard Flash)
   try {
-    const response = await ai.models.generateContent({
-      model: FALLBACK_MODEL,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: options,
+    const model = ai.getGenerativeModel({ 
+      model: FALLBACK_MODEL.startsWith('models/') ? FALLBACK_MODEL : `models/${FALLBACK_MODEL}` 
     });
-    if (response.text) return response.text;
+    
+    console.log(`AI Fallback Session [${FALLBACK_MODEL}]...`);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    
+    if (text) {
+      console.log(`AI Success [${FALLBACK_MODEL}]`);
+      return text;
+    }
   } catch (error: any) {
-    console.warn(`Fallback Model [${FALLBACK_MODEL}] failed:`, error.message);
+    console.error(`Fallback Model [${FALLBACK_MODEL}] error:`, error.message);
   }
 
   return null;
