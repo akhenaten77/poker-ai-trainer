@@ -50,6 +50,47 @@ async function callGemini(
 
   return null;
 }
+/**
+ * Formats a rich description of the current table state for AI processing.
+ * Includes positions (D, SB, BB), stacks, and detailed betting info.
+ */
+function formatTableState(state: GameState) {
+  const { players, dealerIndex, currentRound, communityCards, pot, currentHighestBet, handHistory } = state;
+  const numPlayers = players.length;
+  
+  const sbIndex = (dealerIndex + 1) % numPlayers;
+  const bbIndex = (dealerIndex + 2) % numPlayers;
+
+  const playerTable = players.map((p, i) => {
+    let posLabel = "  ";
+    if (i === dealerIndex) posLabel = " D";
+    if (i === sbIndex) posLabel = "SB";
+    if (i === bbIndex) posLabel = "BB";
+    
+    const status = p.hasFolded ? "[FOLDED]" : p.isAllIn ? "[ALL-IN]" : "";
+    return `${posLabel} | ${p.name.padEnd(8)} | Stack: ${p.stack.toString().padEnd(5)} | Current Bet: ${p.currentBet} ${status}`;
+  }).join("\n");
+
+  const boardStr = communityCards.length > 0 
+    ? communityCards.map(c => c.rank + c.suit.charAt(0)).join(" ") 
+    : "Empty (Pre-flop)";
+
+  return `
+TABLE STATE:
+Round: ${currentRound}
+Board: [${boardStr}]
+Total Pot: ${pot}
+Highest Bet this round: ${currentHighestBet}
+
+PLAYERS:
+Pos | Name     | Status
+-----------------------
+${playerTable}
+
+RECENT LOGS:
+${handHistory.slice(-15).join("\n")}
+`;
+}
 
 /**
  * Returns a bot's decision (action and amount) based on the current game state.
@@ -70,16 +111,20 @@ export async function getBotDecision(
     'Hard': 'You are a world-class GTO poker professional. Play optimally and exploit every weakness of your opponents.'
   };
 
+  const tableContext = formatTableState(state);
   const prompt = `System: ${difficultyPrompts[state.difficulty as keyof typeof difficultyPrompts] || difficultyPrompts.Medium}
   
-You are a skilled Texas Hold'em poker bot. Decide your action.
+You are an expert poker bot. Decide your NEXT move.
 
-Round: ${state.currentRound} | Board: ${state.communityCards.map(c => c.rank + c.suit.charAt(0)).join(" ") || "none"} | Pot: ${state.pot} | ToCall: ${toCall} | MinRaise: ${state.minRaise}
-You: ${bot.name} | Stack: ${bot.stack} | CurrentBet: ${bot.currentBet} | Hole: ${bot.cards.map(c => c.rank + c.suit.charAt(0)).join(" ")}
-Recent history:
-${state.handHistory.slice(-5).join("\n")}
+${tableContext}
 
-Respond with ONLY a JSON object. No preamble, no explanation.
+YOUR INFO:
+Player Name: ${bot.name}
+Your Hand: ${bot.cards.map(c => c.rank + c.suit.charAt(0)).join(" ")}
+Stack: ${bot.stack} | Your current bet this street: ${bot.currentBet} | Amount to CALL: ${toCall}
+
+INSTRUCTION:
+Respond with ONLY a JSON object. 
 Format: {"action":"FOLD"|"CHECK"|"CALL"|"RAISE","amount":number}`;
 
   try {
@@ -129,23 +174,23 @@ export async function getCoachFeedback(
 
   const toCall = stateSnapshot.currentHighestBet - hero.currentBet;
   const actionStr = action === "RAISE" ? `RAISED to ${amount}` : action;
-  const heroCards = hero.cards.map(c => c.rank + c.suit.charAt(0)).join(" ");
-  const board = stateSnapshot.communityCards.map(c => c.rank + c.suit.charAt(0)).join(" ") || "preflop";
-  const history = stateSnapshot.handHistory.slice(-8).join("\n");
+  const tableContext = formatTableState(stateSnapshot);
 
-  const prompt = `You are an elite GTO poker coach. The student just played: ${actionStr}.
+  const prompt = `You are a friendly, expert Poker Coach. Your student (HERO) just made a move.
+  
+${tableContext}
 
-CONTEXT:
-Student Hand: ${heroCards}
-Board: ${stateSnapshot.currentRound} [${board}]
-Pot: ${stateSnapshot.pot} | Student Stack: ${hero.stack} | ToCall was: ${toCall}
-Hand History:
-${history}
+STUDENT ACTION: 
+${hero.name} just chose to: ${actionStr}
+Student hand: ${hero.cards.map(c => c.rank + c.suit.charAt(0)).join(" ")}
 
 TASK:
-Provide a 2-3 sentence strategic critique. 
-Analyze: 1. Hand strength/equity. 2. Opponent range. 3. GTO compliance.
-Be sharp. No markdown. MAX 400 characters.`;
+Provide a 2-3 sentence strategic critique of the student's move. 
+- Use simple, conversational English.
+- Explain the "WHY" behind your advice based on the positions and historical bets.
+- Avoid fancy jargon like "GTO", "Capped Range", or "Polarized" unless you define them simply.
+- Focus on hand strength versus what opponents might be holding based on their actions.
+- Keep it under 400 characters.`;
 
   try {
     const text = await callGemini(prompt, { 
