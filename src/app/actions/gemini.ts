@@ -1,6 +1,6 @@
 "use server";
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { GameState } from "../../engine/game";
 import { PokerAI } from "../../engine/ai";
 
@@ -14,7 +14,7 @@ const MODEL_HIERARCHY = [
 ];
 
 // Initialize the AI client
-const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
+const genAI = API_KEY ? new GoogleGenerativeAI(API_KEY) : null;
 
 /**
  * Shared helper to call Gemini with a structured fallback sequence.
@@ -23,7 +23,7 @@ async function callGemini(
   prompt: string, 
   options: { responseMimeType?: string; maxOutputTokens?: number; temperature?: number }
 ): Promise<string | null> {
-  if (!ai) {
+  if (!genAI) {
     console.error("Gemini API not initialized (missing API key)");
     return null;
   }
@@ -31,7 +31,7 @@ async function callGemini(
   for (const modelId of MODEL_HIERARCHY) {
     try {
       const fullModelId = modelId.startsWith('models/') ? modelId : `models/${modelId}`;
-      const model = ai.getGenerativeModel({ model: fullModelId });
+      const model = genAI.getGenerativeModel({ model: fullModelId });
       
       console.log(`AI Attempt [${modelId}]...`);
       const result = await model.generateContent(prompt);
