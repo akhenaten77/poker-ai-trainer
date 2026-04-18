@@ -7,10 +7,10 @@ import { PokerAI } from "../../engine/ai";
 const API_KEY = process.env.GEMINI_API_KEY || "";
 
 const MODEL_HIERARCHY = [
-  "gemma-3-27b-it",
-  "gemini-3.1-flash-lite-preview",
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-flash"
+  "models/gemma-3-27b-it",
+  "models/gemini-3.1-flash-lite-preview",
+  "models/gemini-2.5-flash-lite",
+  "models/gemini-2.5-flash"
 ];
 
 // Initialize the AI client
