@@ -107,34 +107,35 @@ Format: {"action":"FOLD"|"CHECK"|"CALL"|"RAISE","amount":number}`;
       temperature: 0.1,
     });
 
-    if (!text) throw new Error("All AI models failed or returned empty.");
-
-    // Robust JSON extraction
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("No JSON found in response");
-    
-    const json = JSON.parse(jsonMatch[0]);
-    console.log(`AI Action [Bot ${botIndex}]:`, json.action, json.amount || "");
-
-    // Sanitize response
-    if (json.action === "CALL" && toCall === 0) json.action = "CHECK";
-    if (json.action === "CHECK" && toCall > 0) json.action = "FOLD";
-    if (json.action === "RAISE") {
-      const minTotal = state.currentHighestBet + state.minRaise;
-      if (!json.amount || json.amount < minTotal) json.amount = minTotal;
-      const maxPossible = bot.stack + bot.currentBet;
-      if (json.amount > maxPossible) json.amount = maxPossible;
+    if (text) {
+      console.log(`AI Success - BOT DECISION`);
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+         const json = JSON.parse(jsonMatch[0]);
+         // Sanitize 
+         if (json.action === "CALL" && toCall === 0) json.action = "CHECK";
+         if (json.action === "CHECK" && toCall > 0) json.action = "FOLD";
+         if (json.action === "RAISE") {
+           const minTotal = state.currentHighestBet + state.minRaise;
+           if (!json.amount || json.amount < minTotal) json.amount = minTotal;
+           const maxPossible = bot.stack + bot.currentBet;
+           if (json.amount > maxPossible) json.amount = maxPossible;
+         }
+         return json;
+      }
     }
-
-    return json as { action: 'FOLD' | 'CHECK' | 'CALL' | 'RAISE'; amount?: number };
   } catch (error: any) {
-    console.error(`Gemini Error:`, error.message);
-    return PokerAI.decideAction(state, botIndex, "TAG");
+    console.error(`Gemini Bot Decision Error:`, error.message);
   }
+
+  // Tier 3: Local Heuristic AI (No API required)
+  console.log("FALLBACK: Using local PokerAI engine for bot decision.");
+  return PokerAI.decideAction(state, botIndex);
 }
 
 /**
- * Returns coaching advice based on the HERO's action.
+ * Provides coaching feedback for the Hero's action.
+ * Falls back to local heuristics if API fails.
  */
 export async function getCoachFeedback(
   stateSnapshot: GameState,
@@ -146,7 +147,6 @@ export async function getCoachFeedback(
 
   const toCall = stateSnapshot.currentHighestBet - hero.currentBet;
   const actionStr = action === "RAISE" ? `RAISED to ${amount}` : action;
-  
   const heroCards = hero.cards.map(c => c.rank + c.suit.charAt(0)).join(" ");
   const board = stateSnapshot.communityCards.map(c => c.rank + c.suit.charAt(0)).join(" ") || "preflop";
   const history = stateSnapshot.handHistory.slice(-8).join("\n");
@@ -162,12 +162,8 @@ ${history}
 
 TASK:
 Provide a 2-3 sentence strategic critique. 
-Analyze:
-1. Student's hand strength & pot equity.
-2. Opponent intent (gauge their range based on the betting history).
-3. Was this move EV+, GTO-compliant, or a mistake?
-
-Be sharp and insightful. No markdown. MAX 400 characters.`;
+Analyze: 1. Hand strength/equity. 2. Opponent range. 3. GTO compliance.
+Be sharp. No markdown. MAX 400 characters.`;
 
   try {
     const text = await callGemini(prompt, { 
@@ -175,9 +171,40 @@ Be sharp and insightful. No markdown. MAX 400 characters.`;
       temperature: 0.7     
     });
 
-    return text?.trim() || "Interesting play. Consider the pot odds next time.";
+    if (text) return text.trim();
   } catch (error: any) {
     console.error(`Coach AI Error:`, error.message);
-    return "Coach is currently reviewing your hand history...";
   }
+
+  // Tier 3: Local Heuristic Fallback
+  return getLocalCoachFeedback(stateSnapshot, action, amount);
+}
+
+/**
+ * Local strategic heuristic for when API is unavailable.
+ */
+function getLocalCoachFeedback(state: any, action: string, amount?: number): string {
+  const hero = state.players.find((p: any) => p.id === "hero");
+  if (!hero) return "Analyzing the table dynamics...";
+  
+  const toCall = state.currentHighestBet - hero.currentBet;
+  const isHighStakes = (amount || 0) > state.pot * 0.5 || toCall > state.pot * 0.2;
+
+  if (action === "FOLD" && state.currentHighestBet < 5) {
+     return "Aggressive fold. You dropped out with almost zero pressure—usually, it's worth seeing a flop with most hands for only 1 or 2 BB.";
+  }
+  
+  if (action === "RAISE" && isHighStakes) {
+     return `Sizable raise. By betting ${amount} BB, you're putting significant pressure on the table. This is a strong Value bet if you have a top-tier hand, or a bold BLUFF otherwise.`;
+  }
+
+  if (action === "CALL" && toCall > 50) {
+     return "That's a wide call. Ensure your pot odds justify the draw, otherwise, standard GTO recommends folding to such large bets unless you have top pair or better.";
+  }
+
+  if (action === "CHECK") {
+     return "Solid check. You're maintaining the pot size and keeping your ranges balanced. A classic move for protection or pot control.";
+  }
+
+  return "Gemini API quota exhausted. Continuing with Local Heuristic Coach: Play disciplined Tight-Aggressive poker.";
 }
