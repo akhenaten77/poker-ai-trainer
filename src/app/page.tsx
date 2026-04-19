@@ -104,7 +104,9 @@ export default function Home() {
   useEffect(() => {
     const isHeroTurn = store.players[store.currentPlayerIndex]?.id === "hero";
     const currentPlayer = store.players[store.currentPlayerIndex];
-    const turnKey = `${store.currentRound}-${store.currentPlayerIndex}-${store.communityCards.length}`;
+    // Include currentHighestBet in the turnKey so that if the hero raises (bet changes), 
+    // the bot will accurately re-trigger its action instead of thinking it has already acted this round.
+    const turnKey = `${store.currentRound}-${store.currentPlayerIndex}-${store.communityCards.length}-${store.currentHighestBet}`;
 
     if (
       store.players.length === 0 || 
