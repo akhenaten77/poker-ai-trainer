@@ -30,6 +30,18 @@ function PlayerNode({ p, idx, store }: { p: any, idx: number, store: any }) {
   const isHero = p.id === "hero";
   const numPlayers = store.players.length;
   
+  const isDealer = store.dealerIndex === idx;
+  const isSB = (store.dealerIndex + 1) % numPlayers === idx;
+  const isBB = (store.dealerIndex + 2) % numPlayers === idx;
+  
+  const roleTags = [
+    isDealer ? 'D' : null,
+    isSB ? 'SB' : null,
+    isBB ? 'BB' : null
+  ].filter(Boolean).join('/');
+
+  const roleDisplay = roleTags ? `(${roleTags})` : '';
+  
   // Calculate angle for circular distribution
   // Hero (idx 0) is at the bottom (90 degrees or PI/2)
   // We distribute others clockwise starting from Hero
@@ -56,7 +68,7 @@ function PlayerNode({ p, idx, store }: { p: any, idx: number, store: any }) {
            </div>
          )}
          <div className={`p-3 rounded-xl border ${isActive ? 'bg-[#39FF14]/20 border-[#39FF14] shadow-[0_0_15px_rgba(57,255,20,0.5)]' : 'bg-black/80 border-white/10'} backdrop-blur-md mb-2 flex flex-col items-center min-w-[120px] transition-all`}>
-           <div className="text-xs font-bold text-gray-400">{p.name} {store.dealerIndex === idx ? '(D)' : ''}</div>
+           <div className="text-xs font-bold text-gray-400">{p.name} <span className="text-[#39FF14]">{roleDisplay}</span></div>
            <div className="text-lg font-black text-white transition-all duration-700">${p.stack.toFixed(2)}</div>
            
            {p.currentBet > 0 && (

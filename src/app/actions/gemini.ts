@@ -3,6 +3,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { GameState } from "../../engine/game";
 import { PokerAI } from "../../engine/ai";
+import { PokerEvaluator } from "../../engine/evaluator";
 
 const API_KEY = process.env.GEMINI_API_KEY || "";
 
@@ -115,6 +116,7 @@ export async function getBotDecision(
   const prompt = `System: ${difficultyPrompts[state.difficulty as keyof typeof difficultyPrompts] || difficultyPrompts.Medium}
   
 You are an expert poker bot. Decide your NEXT move.
+STRATEGIC NOTE: If opponents only called the pre-flop 1BB/2BB blinds (limping), do not assume they have strong hands. Small call amounts indicate marginal/weak ranges.
 
 ${tableContext}
 
@@ -176,6 +178,13 @@ export async function getCoachFeedback(
   const actionStr = action === "RAISE" ? `RAISED to ${amount}` : action;
   const tableContext = formatTableState(stateSnapshot);
 
+  // Eliminate Hand Hallucination by telling it exactly what hand the user has
+  let actualHand = "High Card";
+  try {
+     const evalResult = PokerEvaluator.evaluate(hero.cards, stateSnapshot.communityCards);
+     actualHand = evalResult.name;
+  } catch(e) {}
+
   const prompt = `You are a friendly, expert Poker Coach. Your student (HERO) just made a move.
   
 ${tableContext}
@@ -183,6 +192,11 @@ ${tableContext}
 STUDENT ACTION: 
 ${hero.name} just chose to: ${actionStr}
 Student hand: ${hero.cards.map(c => c.rank + c.suit.charAt(0)).join(" ")}
+ACTUAL HAND STRENGTH: ${actualHand}
+
+CRITICAL RULES FOR ADVICE:
+1. Do NOT guess what hand the student has. The student explicitly holds: ${actualHand}. Base your advice on this exact hand strength.
+2. If opponents only called pre-flop small blinds ($1 or $2 stakes), they are just limping. Calling the minimum bet does NOT suggest they have a good hand. Do not give them undue credit for basic calls.
 
 TASK:
 Provide a 2-3 sentence strategic critique of the student's move. 
