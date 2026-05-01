@@ -66,9 +66,9 @@ function classifyHand(cards: Card[]): { category: HandCategory; label: string; i
 }
 
 function getPositionContext(position: string): 'early' | 'middle' | 'late' {
-  if (['UTG'].includes(position)) return 'early';
-  if (['MP', 'SB', 'BB'].includes(position)) return 'middle';
-  return 'late'; // BTN, CO
+  if (position.includes('UTG')) return 'early';
+  if (['Middle Position', 'Small Blind', 'Big Blind'].includes(position)) return 'middle';
+  return 'late'; // Button, Cutoff
 }
 
 function getStackDepthLabel(stackBB: number): string {
@@ -104,14 +104,21 @@ async function callGemini(
       const fullModelId = modelId.startsWith('models/') ? modelId : `models/${modelId}`;
       const model = genAI.getGenerativeModel({ model: fullModelId });
       
-      console.log(`AI Attempt [${modelId}]...`);
+      const isGemma = modelId.toLowerCase().includes('gemma');
+      const generationConfig: any = {
+        maxOutputTokens: options.maxOutputTokens,
+        temperature: options.temperature,
+      };
+      
+      // Only use JSON mode if NOT a Gemma model (which usually doesn't support it)
+      if (options.responseMimeType && !isGemma) {
+        generationConfig.responseMimeType = options.responseMimeType;
+      }
+
+      console.log(`AI Attempt [${modelId}]${isGemma ? ' (No JSON mode)' : ''}...`);
       const result = await model.generateContent({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: options.responseMimeType,
-          maxOutputTokens: options.maxOutputTokens,
-          temperature: options.temperature,
-        }
+        generationConfig
       });
       const response = await result.response;
       const text = response.text();
@@ -164,14 +171,15 @@ function buildCompressedGameState(state: GameState, heroId?: string) {
 
   // Derive Positions
   const getPosition = (index: number) => {
+    const positions = ['Button', 'Small Blind', 'Big Blind', 'UTG (Early)', 'Middle Position', 'Cutoff'];
     if (state.players.length === 2) {
-      return index === state.dealerIndex ? 'BTN' : 'BB';
+      return index === state.dealerIndex ? 'Button' : 'Big Blind';
     }
-    if (index === state.dealerIndex) return 'BTN';
-    if (index === (state.dealerIndex + 1) % state.players.length) return 'SB';
-    if (index === (state.dealerIndex + 2) % state.players.length) return 'BB';
-    if (index === (state.dealerIndex + 3) % state.players.length) return 'UTG';
-    return 'MP'; 
+    if (index === state.dealerIndex) return 'Button';
+    if (index === (state.dealerIndex + 1) % state.players.length) return 'Small Blind';
+    if (index === (state.dealerIndex + 2) % state.players.length) return 'Big Blind';
+    if (index === (state.dealerIndex + 3) % state.players.length) return 'UTG (Early)';
+    return 'Middle Position'; 
   };
 
   const payload = {
@@ -343,12 +351,12 @@ function buildCoachingContext(state: GameState): CoachingContext {
 
   // Position
   const getPosition = (index: number) => {
-    if (state.players.length === 2) return index === state.dealerIndex ? 'BTN' : 'BB';
-    if (index === state.dealerIndex) return 'BTN';
-    if (index === (state.dealerIndex + 1) % state.players.length) return 'SB';
-    if (index === (state.dealerIndex + 2) % state.players.length) return 'BB';
-    if (index === (state.dealerIndex + 3) % state.players.length) return 'UTG';
-    return 'MP';
+    if (state.players.length === 2) return index === state.dealerIndex ? 'Button' : 'Big Blind';
+    if (index === state.dealerIndex) return 'Button';
+    if (index === (state.dealerIndex + 1) % state.players.length) return 'Small Blind';
+    if (index === (state.dealerIndex + 2) % state.players.length) return 'Big Blind';
+    if (index === (state.dealerIndex + 3) % state.players.length) return 'UTG (Early)';
+    return 'Middle Position';
   };
   const position = getPosition(heroIndex);
   const positionContext = getPositionContext(position);
@@ -480,7 +488,9 @@ Output STRICTLY in JSON:
 }
 
 OUTPUT QUALITY RULES:
-- NO jargon (no "GTO", "range merging", "polarized", "capped", "equity realization")
+- NO jargon (no "GTO", "range merging", "polarized", "capped", "equity realization", "BTN", "SB", "BB", "UTG")
+- Always use full names for positions (e.g., "Button" instead of "BTN", "Small Blind" instead of "SB")
+- Always use "Big Blinds" instead of "BB" for stack sizes (e.g., "50 Big Blinds" instead of "50BB")
 - NO generic advice that could apply to any hand
 - ALWAYS mention the student's position (${ctx.position}) and hand (${ctx.handLabel}) in your explanation
 - Be specific to THIS exact situation
@@ -573,5 +583,8 @@ function getLocalCoachFeedback(state: GameState, action: string, amount?: number
     }
   }
 
-  return `**Verdict: OKAY**\nLocal analysis: ${ctx.handLabel} from ${ctx.position} at ${ctx.stackBB}BB.\n\n*Mistake:* Unable to fully evaluate (API unavailable).\n*Tip:* Play disciplined, position-aware poker.`;
+  const posName = ctx.position;
+  const stackDesc = `${ctx.stackBB} Big Blinds`;
+  
+  return `**Verdict: OKAY**\n\nLocal analysis: You played **${ctx.handLabel}** from the **${posName}** with a stack of **${stackDesc}**.\n\n*Mistake:* None detected, but I'm currently unable to provide deep strategic analysis because the AI coach is offline.\n\n*Tip:* In this spot, focus on your position. The ${posName} is ${ctx.positionContext === 'late' ? 'a great' : 'a challenging'} position to play from. With ${ctx.stackBB} Big Blinds, you have plenty of room to play patiently.`;
 }

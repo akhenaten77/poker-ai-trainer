@@ -48,6 +48,10 @@ body {
   font-family: var(--font-sans);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   UTILITY CLASSES
+   ═══════════════════════════════════════════════════════════════════════ */
+
 @layer utilities {
   .font-headline {
     font-family: var(--font-display);
@@ -68,19 +72,167 @@ body {
     background-size: 60px 60px;
     opacity: 0.05;
   }
-  .poker-felt {
-    background: radial-gradient(circle at center, #1a4a1a 0%, #0d260d 70%, #051205 100%);
-    box-shadow: inset 0 0 100px rgba(0,0,0,0.8), 0 0 30px rgba(57, 255, 20, 0.15);
-  }
-  .neon-rim {
-    box-shadow: 0 0 15px rgba(57, 255, 20, 0.4);
-  }
   .range-grid {
     display: grid;
     grid-template-columns: repeat(13, 1fr);
     gap: 2px;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   REALISTIC POKER FELT — Casino-grade table surface
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.poker-felt {
+  /* Multi-layered felt: warm center, deep green body, dark vignette edges */
+  background:
+    /* Soft center spotlight */
+    radial-gradient(ellipse 70% 60% at 50% 45%, rgba(35, 120, 40, 0.4) 0%, transparent 70%),
+    /* Main felt gradient */
+    radial-gradient(ellipse at center, #1d5a22 0%, #165a1a 25%, #0f3d12 55%, #0a2a0c 80%, #051205 100%);
+  
+  /* Depth: inner shadow for sunken felt, outer glow for table edge */
+  box-shadow:
+    inset 0 0 80px rgba(0, 0, 0, 0.6),
+    inset 0 0 200px rgba(0, 0, 0, 0.3),
+    0 4px 30px rgba(0, 0, 0, 0.8),
+    0 0 60px rgba(0, 0, 0, 0.4);
+  
+  position: relative;
+  overflow: hidden;
+}
+
+/* Felt texture overlay — simulates woven fabric grain */
+.poker-felt::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='felt'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23felt)'/%3E%3C/svg%3E");
+  opacity: 0.06;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Vignette effect — darkened edges for depth */
+.poker-felt::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.45) 100%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Table rail — the wooden/padded border around the felt */
+.table-rail {
+  border: 12px solid transparent;
+  border-image: linear-gradient(180deg, #2c1a0e 0%, #1a0f06 50%, #0d0703 100%) 1;
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.8),
+    0 2px 12px rgba(0, 0, 0, 0.6);
+}
+
+.neon-rim {
+  box-shadow:
+    0 0 12px rgba(57, 255, 20, 0.3),
+    0 0 40px rgba(57, 255, 20, 0.08),
+    inset 0 0 20px rgba(0, 0, 0, 0.4);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CARD VISUAL EFFECTS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Realistic card shadow — simulates card lifted off felt */
+.card-face-shadow {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 4px 8px rgba(0, 0, 0, 0.25),
+    0 8px 20px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Card paper texture — subtle noise overlay */
+.card-noise {
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3e%3cfilter id='noiseFilter'%3e%3cturbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3e%3c/filter%3e%3crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3e%3c/svg%3e");
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+/* Specular highlight — top-left light source reflection */
+.card-specular {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.04) 25%,
+    transparent 50%,
+    rgba(0, 0, 0, 0.03) 80%,
+    rgba(0, 0, 0, 0.06) 100%
+  );
+  pointer-events: none;
+}
+
+/* Card gradient (legacy compat) */
+.card-gradient {
+  background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%, rgba(0,0,0,0.05) 100%);
+}
+
+/* Hover lift for card containers */
+.playing-card:hover .card-face-shadow {
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.3),
+    0 8px 16px rgba(0, 0, 0, 0.3),
+    0 16px 32px rgba(0, 0, 0, 0.2),
+    0 0 8px rgba(57, 255, 20, 0.1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CHIP ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@keyframes chipIn {
+  0% {
+    transform: translateY(-30px) scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(2px) scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-chip-in {
+  animation: chipIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes chipToPot {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--chip-dx, 0px), var(--chip-dy, -60px)) scale(0.5);
+    opacity: 0;
+  }
+}
+
+.animate-chip-to-pot {
+  animation: chipToPot 0.3s ease-out forwards;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   GENERAL ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════ */
 
 @keyframes floatUp {
   0% { transform: translateY(0); opacity: 1; }
@@ -90,6 +242,34 @@ body {
 .animate-float-up {
   animation: floatUp 1.5s ease-out forwards;
 }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out both;
+}
+
+@keyframes dealCard {
+  0% {
+    transform: translate(-50%, -50%) scale(0.5) rotate(0deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(0, 0) scale(1) rotate(var(--deal-rotate, 0deg));
+    opacity: 1;
+  }
+}
+
+.animate-deal {
+  animation: dealCard 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MISC UTILITIES
+   ═══════════════════════════════════════════════════════════════════════ */
 
 .slant-glow {
   transform: skewX(-20deg) translateX(-100%);
@@ -116,6 +296,3 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(57, 255, 20, 0.4);
 }
-
-
-
