@@ -112,6 +112,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = players[state.currentPlayerIndex];
     let { pot, currentHighestBet, minRaise, handHistory } = state;
 
+    console.log(`[STORE] playerAction called: ${player.name} action=${action} amount=${amount} currentBet=${player.currentBet} stack=${player.stack}`);
+
     if (action === 'FOLD') {
       player.hasFolded = true;
       handHistory = [...handHistory, `${player.name} folds`];

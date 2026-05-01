@@ -1,6 +1,7 @@
 import { GameState, BettingRound } from './game';
 import { PokerEvaluator } from './evaluator';
 import { Card, toSolverCard } from './deck';
+import { analyzeBoardTexture } from './boardAnalysis';
 
 export type AIProfile = 'NIT' | 'TAG' | 'LAG' | 'STATION';
 
@@ -87,7 +88,11 @@ export class PokerAI {
     const evaled = PokerEvaluator.evaluate(holeCards, communityCards);
     const tier = classifyPostflop(evaled.rank);
 
-    return this.decidePostflopAction(tier, evaled.rank, toCall, potSize, state, aggression, tightness, bluffFreq, rand);
+    console.log(`[AI DEBUG] ${player.name} | Hand: ${evaled.name} (rank=${evaled.rank}, tier=${tier}) | toCall=${toCall} | pot=${potSize} | profile=${profile} | aggression=${aggression}`);
+
+    const decision = this.decidePostflopAction(tier, evaled.rank, toCall, potSize, state, aggression, tightness, bluffFreq, rand, communityCards, holeCards);
+    console.log(`[AI DEBUG] ${player.name} → ${decision.action}${decision.amount ? ' amount=' + decision.amount : ''}`);
+    return decision;
   }
 
   // ─── PREFLOP DECISION ──────────────────────────────────────────────
@@ -162,44 +167,83 @@ export class PokerAI {
     aggression: number,
     tightness: number,
     bluffFreq: number,
-    rand: number
+    rand: number,
+    communityCards?: Card[],
+    holeCards?: Card[]
   ): AIAction {
     const minRaise = state.currentHighestBet + state.minRaise;
     const effectivePot = Math.max(potSize, 1); // avoid division by zero
+    
+    // ── Board texture analysis ──
+    const boardTexture = communityCards ? analyzeBoardTexture(communityCards) : null;
+    const boardIsPaired = boardTexture?.isPaired || false;
+    const boardIsDoublePaired = boardTexture?.isDoublePaired || false;
+    const boardDanger = boardTexture?.dangerLevel || 'low';
+    
+    // ── Check if hole cards actually contribute to the hand ──
+    let holeCardsContribute = true;
+    if (holeCards && communityCards && handRank <= 3) {
+      const holeRanks = holeCards.map(c => c.rank);
+      const boardRanks = communityCards.map(c => c.rank);
+      const boardRankCounts: Record<string, number> = {};
+      boardRanks.forEach(r => { boardRankCounts[r] = (boardRankCounts[r] || 0) + 1; });
+      
+      if (handRank === 3) { // Two Pair
+        const boardPairs = Object.entries(boardRankCounts).filter(([, c]) => c >= 2);
+        if (boardPairs.length >= 2) {
+          // Both pairs on the board — our hand is just a kicker
+          const holeMatchesPair = holeRanks.some(hr => boardPairs.some(([pr]) => pr === hr));
+          if (!holeMatchesPair) holeCardsContribute = false;
+        }
+      }
+      if (handRank === 2) { // One Pair
+        const boardPairs = Object.entries(boardRankCounts).filter(([, c]) => c >= 2);
+        const isPocketPair = holeRanks[0] === holeRanks[1];
+        const holeMatchesBoard = holeRanks.some(hr => boardRanks.includes(hr));
+        if (boardPairs.length > 0 && !isPocketPair && !holeMatchesBoard) {
+          holeCardsContribute = false;
+        }
+      }
+    }
+
+    console.log(`[AI POSTFLOP] tier=${tier} | boardPaired=${boardIsPaired} | boardDanger=${boardDanger} | holeContribute=${holeCardsContribute} | toCall=${toCall} | pot=${effectivePot}`);
+
+    // ── CRITICAL OVERRIDE: Board-made hands are worthless ──
+    if (!holeCardsContribute && handRank <= 3) {
+      if (toCall === 0) return { action: 'CHECK' };
+      return { action: 'FOLD' };
+    }
 
     switch (tier) {
       // ── MONSTER: Full House+ ──
-      // Always bet/raise for maximum value. Occasionally slow-play.
       case 'monster': {
-        const slowPlayChance = 0.15; // 15% chance to trap
+        const slowPlayChance = 0.15;
         if (toCall === 0) {
-          if (rand < slowPlayChance) {
-            return { action: 'CHECK' }; // Slow-play trap
-          }
-          // Bet big for value
+          if (rand < slowPlayChance) return { action: 'CHECK' };
           const betSize = Math.max(minRaise, Math.round(effectivePot * (0.6 + rand * 0.4)));
           return { action: 'RAISE', amount: betSize };
         }
-        // Facing a bet — raise for value
         if (rand < 0.7) {
           const raiseSize = Math.max(minRaise, toCall * 2.5 + Math.round(effectivePot * 0.3));
           return { action: 'RAISE', amount: raiseSize };
         }
-        return { action: 'CALL' }; // Sometimes just call to keep them in
+        return { action: 'CALL' };
       }
 
       // ── VERY STRONG: Straight / Flush ──
-      // Bet for value most of the time. Size bets to get called.
       case 'very_strong': {
         if (toCall === 0) {
-          // No bet yet — always lead out for value
           if (rand < 0.85) {
             const betSize = Math.max(minRaise, Math.round(effectivePot * (0.5 + rand * 0.35)));
             return { action: 'RAISE', amount: betSize };
           }
-          return { action: 'CHECK' }; // Rare check-raise setup
+          return { action: 'CHECK' };
         }
-        // Facing a bet — raise often, always at least call
+        // On paired boards, be more cautious with straights/flushes
+        if (boardIsPaired && toCall > effectivePot * 0.7) {
+          // Big bet on paired board — just call, don't raise
+          return { action: 'CALL' };
+        }
         if (rand < aggression * 0.8) {
           const raiseSize = Math.max(minRaise, toCall * 2 + Math.round(effectivePot * 0.25));
           return { action: 'RAISE', amount: raiseSize };
@@ -208,7 +252,6 @@ export class PokerAI {
       }
 
       // ── STRONG: Three of a Kind ──
-      // Bet for value, but be cautious on scary boards.
       case 'strong': {
         if (toCall === 0) {
           if (rand < aggression) {
@@ -225,17 +268,33 @@ export class PokerAI {
       }
 
       // ── MEDIUM: Two Pair ──
-      // Bet for value when checked to. Call raises. Occasionally raise.
+      // NOW BOARD-AWARE: On paired boards, Two Pair is very vulnerable
       case 'medium': {
+        // Paired board = DANGER ZONE for Two Pair
+        if (boardIsPaired || boardDanger === 'high' || boardDanger === 'extreme') {
+          if (toCall === 0) {
+            // Don't bet into a dangerous board with just two pair
+            if (rand < 0.25) {
+              const betSize = Math.max(minRaise, Math.round(effectivePot * 0.3));
+              return { action: 'RAISE', amount: betSize };
+            }
+            return { action: 'CHECK' };
+          }
+          // Facing a bet on a paired board with Two Pair: FOLD to big bets
+          if (toCall > effectivePot * 0.3) return { action: 'FOLD' };
+          // Small bet — reluctant call
+          if (toCall <= effectivePot * 0.2) return { action: 'CALL' };
+          return { action: 'FOLD' };
+        }
+
+        // Safe board — original logic
         if (toCall === 0) {
-          // Two pair is strong enough to bet for value
           if (rand < aggression * 0.8) {
             const betSize = Math.max(minRaise, Math.round(effectivePot * (0.35 + rand * 0.3)));
             return { action: 'RAISE', amount: betSize };
           }
           return { action: 'CHECK' };
         }
-        // Facing a bet — call almost always, sometimes raise
         if (rand < aggression * 0.3) {
           const raiseSize = Math.max(minRaise, toCall * 2);
           return { action: 'RAISE', amount: raiseSize };
@@ -244,48 +303,36 @@ export class PokerAI {
       }
 
       // ── WEAK: One Pair ──
-      // Check/call small bets. Fold to big pressure if tight.
       case 'weak': {
         if (toCall === 0) {
-          // Bet sometimes for thin value / protection
           if (rand < aggression * 0.45) {
             const betSize = Math.max(minRaise, Math.round(effectivePot * (0.25 + rand * 0.25)));
             return { action: 'RAISE', amount: betSize };
           }
           return { action: 'CHECK' };
         }
-        // Facing a bet
+        // On dangerous boards, fold one pair to any significant bet
+        if ((boardIsPaired || boardDanger === 'high') && toCall > effectivePot * 0.25) {
+          return { action: 'FOLD' };
+        }
         const potOdds = toCall / (effectivePot + toCall);
-        if (toCall > effectivePot * 0.6 && tightness > 0.5) {
-          return { action: 'FOLD' }; // Tight players fold to big bets with just a pair
-        }
-        if (tightness < 0.2) {
-          return { action: 'CALL' }; // Stations call everything
-        }
-        if (potOdds < 0.35) {
-          return { action: 'CALL' }; // Getting decent odds
-        }
+        if (toCall > effectivePot * 0.6 && tightness > 0.5) return { action: 'FOLD' };
+        if (tightness < 0.2) return { action: 'CALL' };
+        if (potOdds < 0.35) return { action: 'CALL' };
         return rand < tightness ? { action: 'FOLD' } : { action: 'CALL' };
       }
 
       // ── NOTHING: High Card ──
-      // Check when free. Bluff occasionally. Fold to bets unless station.
       case 'nothing':
       default: {
         if (toCall === 0) {
-          // Bluff bet sometimes
           if (rand < bluffFreq) {
             const betSize = Math.max(minRaise, Math.round(effectivePot * (0.4 + rand * 0.3)));
             return { action: 'RAISE', amount: betSize };
           }
           return { action: 'CHECK' };
         }
-        // Facing a bet
-        // Stations float with nothing
-        if (tightness < 0.15 && toCall < effectivePot * 0.4) {
-          return { action: 'CALL' };
-        }
-        // Occasional bluff-raise
+        if (tightness < 0.15 && toCall < effectivePot * 0.4) return { action: 'CALL' };
         if (rand < bluffFreq * 0.3) {
           const raiseSize = Math.max(minRaise, toCall * 2.5);
           return { action: 'RAISE', amount: raiseSize };
