@@ -5,6 +5,7 @@ import { GameState } from "../../engine/game";
 import { PokerAI } from "../../engine/ai";
 import { PokerEvaluator } from "../../engine/evaluator";
 import { Card } from "../../engine/deck";
+import { buildHandContext, analyzeBoardTexture, HandContext } from "../../engine/boardAnalysis";
 
 // ─── HAND CATEGORIZATION ENGINE ─────────────────────────────────────────────
 // Deterministic preflop hand classification. Runs BEFORE the LLM call so the
@@ -227,97 +228,224 @@ export async function getBotDecision(
   if (!bot || !bot.isBot) return { action: "CHECK" };
 
   const toCall = state.currentHighestBet - bot.currentBet;
-  
-  const botProfiles = {
-    'Easy': {
-      "style": "balanced",
-      "bluff_frequency": 0.4,
-      "fold_threshold": "low",
-      "risk_tolerance": "high"
-    },
-    'Medium': {
-      "style": "tight",
-      "bluff_frequency": 0.1,
-      "fold_threshold": "high",
-      "risk_tolerance": "low"
-    },
-    'Hard': {
-      "style": "aggressive",
-      "bluff_frequency": 0.2,
-      "fold_threshold": "medium",
-      "risk_tolerance": "controlled"
-    }
-  };
+  const potSize = state.pot;
+  const isPreflop = state.communityCards.length === 0;
 
-  const profile = botProfiles[state.difficulty as keyof typeof botProfiles] || botProfiles.Medium;
-  const gameStateJson = buildCompressedGameState(state, bot.id);
+  // ── Pre-compute EVERYTHING so the LLM never guesses ──
+  const handCtx = buildHandContext(bot.cards, state.communityCards);
+  const potOdds = toCall > 0 ? (toCall / (potSize + toCall) * 100).toFixed(1) : '0';
+  const stackToPot = potSize > 0 ? (bot.stack / potSize).toFixed(1) : 'infinite';
+  const activePlayers = state.players.filter(p => !p.hasFolded && !p.isAllIn);
+  const numOpponents = activePlayers.length - 1;
 
-  const prompt = `System Instruction:
-You are a professional poker player making a decision in a real game.
+  // ── Preflop hand classification for preflop rounds ──
+  const preflopInfo = isPreflop ? classifyHand(bot.cards) : null;
 
-Goals:
-- Make the MOST +EV practical move
-- Avoid unnecessary complexity or GTO jargon
-- Adapt to multi-player pots (not heads-up only)
-- Consider position, pot odds, and player count
-- You are acting as the player identified as "hero" in the state
+  // ── Bot personality based on difficulty + index for variety ──
+  const personalities = [
+    { name: 'Tight-Aggressive', style: 'Plays few hands but bets aggressively with strong holdings. Folds marginal hands to pressure.' },
+    { name: 'Loose-Aggressive', style: 'Plays many hands, bluffs occasionally, applies pressure with bets and raises.' },
+    { name: 'Tight-Passive', style: 'Very selective about hands, rarely bluffs, calls more than raises. Folds to heavy pressure with medium hands.' },
+    { name: 'Balanced', style: 'Mixes aggression with caution. Value bets strong hands, folds weak ones, occasionally bluffs.' },
+    { name: 'Nitty', style: 'Extremely tight. Only plays premium hands. Folds anything marginal. Almost never bluffs.' },
+  ];
+  const personality = personalities[botIndex % personalities.length];
 
-Bot Profile (Adhere to this style):
-${JSON.stringify(profile, null, 2)}
+  // ── Build the structured prompt ──
+  let handSection: string;
+  if (isPreflop) {
+    handSection = `
+PREFLOP SITUATION:
+- Your hole cards: ${bot.cards.map(c => c.rank + c.suit.charAt(0)).join(', ')}
+- Hand category: ${preflopInfo?.category || 'unknown'} (${preflopInfo?.label || '??'})
+- ${preflopInfo?.isSuited ? 'Suited' : 'Offsuit'}`;
+  } else {
+    handSection = `
+YOUR HAND EVALUATION (pre-computed, trust this):
+- Hole cards: ${bot.cards.map(c => c.rank + c.suit.charAt(0)).join(', ')}
+- Community cards: ${state.communityCards.map(c => c.rank + c.suit.charAt(0)).join(', ')}
+- Made hand: **${handCtx.handName}** (rank ${handCtx.handRank}/10)
+- Your hole cards contribute: ${handCtx.usesHoleCards ? 'YES — your cards improve the hand' : 'NO — this hand is mostly/entirely on the board, everyone has it'}
+- Vulnerable: ${handCtx.isVulnerable ? 'YES' : 'NO'}
+- Beats: ${handCtx.beatsWhat}
+- Loses to: ${handCtx.losesTo}
 
-Game State Snapshot:
-${gameStateJson}
+BOARD ANALYSIS:
+- Board danger level: ${handCtx.boardTexture.dangerLevel.toUpperCase()}
+- Paired board: ${handCtx.boardTexture.isPaired ? 'YES (full house possible for opponents)' : 'No'}
+- Flush threat: ${handCtx.boardTexture.hasFlushComplete ? 'FLUSH LIKELY ON BOARD' : handCtx.boardTexture.hasFlushDraw ? 'Flush draw present' : 'None'}
+- Straight threat: ${handCtx.boardTexture.hasStraightComplete ? 'STRAIGHT LIKELY' : handCtx.boardTexture.hasStraightDraw ? 'Straight draw present' : 'None'}
+${handCtx.boardTexture.threats.length > 0 ? '- Threats: ' + handCtx.boardTexture.threats.join('; ') : ''}
 
-Output STRICTLY in JSON:
-{
-  "action": "fold | call | raise | check | bet",
-  "bet_size": number,
-  "reason": "Short, clear explanation in simple language (max 2 sentences)"
-}
+STRATEGIC GUIDANCE: ${handCtx.recommendation}`;
+  }
 
-Rules:
-- NO theory explanations
-- NO long reasoning
-- NO disclaimers
-- Be decisive`;
+  const prompt = `You are a poker bot making a decision. You must respond ONLY with valid JSON.
+
+YOUR PLAY STYLE: ${personality.name} — ${personality.style}
+
+GAME STATE:
+- Street: ${state.currentRound}
+- Pot: $${potSize}
+- Your stack: $${bot.stack}
+- Current bet to call: $${toCall}
+- Pot odds: ${potOdds}%
+- Stack-to-pot ratio: ${stackToPot}
+- Opponents remaining: ${numOpponents}
+- Min raise total: $${state.currentHighestBet + state.minRaise}
+${handSection}
+
+CRITICAL DECISION RULES:
+1. If your hand rank is 3 or below (Two Pair or worse) AND the board is paired AND there's a large bet, you should usually FOLD — full houses are very likely.
+2. If "Your hole cards contribute: NO", your hand is shared by ALL players. Having "Two Pair" on a double-paired board means NOTHING — fold to any significant bet.
+3. If hand rank >= 7 (Full House+) and your hole cards contribute, bet BIG for value (60-100% of pot).
+4. If hand rank >= 5 (Straight/Flush) on an unpaired board, bet for value (50-75% of pot).
+5. With weak hands (rank 1-2), check when free, fold to bets unless getting excellent pot odds (<20%).
+6. On the river with a medium hand (Two Pair) facing a pot-sized bet on a dangerous board: FOLD. Don't pay off.
+7. Bluff very rarely (< 10% of the time) and only when representing a credible hand.
+
+Respond STRICTLY as JSON:
+{"action":"fold|check|call|raise","bet_size":0,"reason":"max 1 sentence"}`;
 
   try {
     const text = await callGemini(prompt, {
       responseMimeType: "application/json",
-      maxOutputTokens: 200,
-      temperature: 0.2,
+      maxOutputTokens: 150,
+      temperature: 0.15,
     });
 
     if (text) {
-      console.log(`AI Success - BOT DECISION`);
+      console.log(`[BOT LLM] ${bot.name} raw response:`, text);
       const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
       const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-         const json = JSON.parse(jsonMatch[0]);
-         
-         if (json.action.toUpperCase() === "BET") json.action = "RAISE";
-         json.action = json.action.toUpperCase();
+        const json = JSON.parse(jsonMatch[0]);
+        let action = (json.action || 'check').toUpperCase();
+        if (action === 'BET') action = 'RAISE';
 
-         if (json.action === "CALL" && toCall === 0) json.action = "CHECK";
-         if (json.action === "CHECK" && toCall > 0) json.action = "FOLD";
-         if (json.action === "RAISE") {
-           const minTotal = state.currentHighestBet + state.minRaise;
-           json.amount = json.bet_size || minTotal;
-           if (json.amount < minTotal) json.amount = minTotal;
-           const maxPossible = bot.stack + bot.currentBet;
-           if (json.amount > maxPossible) json.amount = maxPossible;
-         } else {
-             delete json.amount;
-         }
-         return { action: json.action, amount: json.amount };
+        // Sanitize action
+        if (action === 'CALL' && toCall === 0) action = 'CHECK';
+        if (action === 'CHECK' && toCall > 0) action = 'FOLD';
+
+        let amount: number | undefined;
+        if (action === 'RAISE') {
+          const minTotal = state.currentHighestBet + state.minRaise;
+          amount = json.bet_size || minTotal;
+          if (amount! < minTotal) amount = minTotal;
+          const maxPossible = bot.stack + bot.currentBet;
+          if (amount! > maxPossible) amount = maxPossible;
+        }
+
+        console.log(`[BOT LLM] ${bot.name} → ${action}${amount ? ' $' + amount : ''} | reason: ${json.reason || 'none'}`);
+        return { action: action as any, amount };
       }
     }
   } catch (error: any) {
     console.error(`Gemini Bot Decision Error:`, error.message);
   }
 
-  console.log("FALLBACK: Using local PokerAI engine for bot decision.");
-  return PokerAI.decideAction(state, botIndex);
+  // ── ENHANCED FALLBACK: Board-aware local logic ──
+  console.log(`[BOT FALLBACK] ${bot.name} using enhanced local engine`);
+  return getBoardAwareFallback(state, botIndex, handCtx);
+}
+
+/**
+ * Enhanced fallback that uses board analysis when LLM is unavailable.
+ * This catches the exact scenario the user reported: bots calling with
+ * Two Pair on a paired board where Full House is likely.
+ */
+function getBoardAwareFallback(
+  state: GameState,
+  botIndex: number,
+  handCtx: HandContext
+): { action: 'FOLD' | 'CHECK' | 'CALL' | 'RAISE'; amount?: number } {
+  const bot = state.players[botIndex];
+  const toCall = state.currentHighestBet - bot.currentBet;
+  const potSize = state.pot;
+  const isPreflop = state.communityCards.length === 0;
+
+  // Preflop: use existing engine
+  if (isPreflop) {
+    return PokerAI.decideAction(state, botIndex);
+  }
+
+  const { handRank, isVulnerable, usesHoleCards, boardTexture } = handCtx;
+  const minRaise = state.currentHighestBet + state.minRaise;
+
+  // ── CRITICAL: Hands that don't use hole cards are worthless ──
+  if (!usesHoleCards && handRank <= 3) {
+    if (toCall === 0) return { action: 'CHECK' };
+    return { action: 'FOLD' };
+  }
+
+  // ── Two Pair or less on a dangerous paired board facing a bet ──
+  if (handRank <= 3 && boardTexture.isPaired && toCall > 0) {
+    // On paired boards with significant bet, fold weak/medium hands
+    if (toCall > potSize * 0.3) return { action: 'FOLD' };
+    // Small bet — maybe call with decent two pair
+    if (handRank === 3 && usesHoleCards && toCall <= potSize * 0.2) return { action: 'CALL' };
+    return { action: 'FOLD' };
+  }
+
+  // ── Monster hands (Full House+): Bet big ──
+  if (handRank >= 7) {
+    if (toCall === 0) {
+      const betSize = Math.max(minRaise, Math.round(potSize * 0.75));
+      return { action: 'RAISE', amount: betSize };
+    }
+    // Facing a bet with a monster: raise
+    if (Math.random() < 0.75) {
+      const raiseSize = Math.max(minRaise, toCall * 2 + Math.round(potSize * 0.3));
+      return { action: 'RAISE', amount: raiseSize };
+    }
+    return { action: 'CALL' };
+  }
+
+  // ── Strong hands (Straight/Flush): Value bet ──
+  if (handRank >= 5) {
+    if (toCall === 0) {
+      const betSize = Math.max(minRaise, Math.round(potSize * 0.6));
+      return { action: 'RAISE', amount: betSize };
+    }
+    if (isVulnerable && toCall > potSize * 0.8) {
+      // Flush on paired board facing huge bet — cautious call
+      return { action: 'CALL' };
+    }
+    return { action: 'CALL' };
+  }
+
+  // ── Trips: Usually strong ──
+  if (handRank === 4) {
+    if (toCall === 0) {
+      const betSize = Math.max(minRaise, Math.round(potSize * 0.5));
+      return { action: 'RAISE', amount: betSize };
+    }
+    return { action: 'CALL' };
+  }
+
+  // ── Two Pair (non-dangerous board): Moderate value ──
+  if (handRank === 3 && usesHoleCards) {
+    if (toCall === 0) {
+      if (Math.random() < 0.6) {
+        const betSize = Math.max(minRaise, Math.round(potSize * 0.4));
+        return { action: 'RAISE', amount: betSize };
+      }
+      return { action: 'CHECK' };
+    }
+    if (toCall <= potSize * 0.4) return { action: 'CALL' };
+    return { action: 'FOLD' };
+  }
+
+  // ── One Pair: Weak ──
+  if (handRank === 2) {
+    if (toCall === 0) return { action: 'CHECK' };
+    if (toCall <= potSize * 0.25) return { action: 'CALL' };
+    return { action: 'FOLD' };
+  }
+
+  // ── High Card / Nothing ──
+  if (toCall === 0) return { action: 'CHECK' };
+  return { action: 'FOLD' };
 }
 
 // ─── COACHING CONTEXT BUILDER ────────────────────────────────────────────────
