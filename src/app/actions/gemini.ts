@@ -17,9 +17,6 @@ const MODEL_HIERARCHY = [
 // Initialize the AI client
 const genAI = API_KEY ? new GoogleGenerativeAI(API_KEY) : null;
 
-/**
- * Shared helper to call Gemini with a structured fallback sequence.
- */
 async function callGemini(
   prompt: string, 
   options: { responseMimeType?: string; maxOutputTokens?: number; temperature?: number }
@@ -35,7 +32,14 @@ async function callGemini(
       const model = genAI.getGenerativeModel({ model: fullModelId });
       
       console.log(`AI Attempt [${modelId}]...`);
-      const result = await model.generateContent(prompt);
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: options.responseMimeType,
+          maxOutputTokens: options.maxOutputTokens,
+          temperature: options.temperature,
+        }
+      });
       const response = await result.response;
       const text = response.text();
       
@@ -45,58 +49,95 @@ async function callGemini(
       }
     } catch (error: any) {
       console.warn(`Model [${modelId}] failed/unavailable:`, error.message);
-      // Continue to next model in hierarchy
     }
   }
 
   return null;
 }
-/**
- * Formats a rich description of the current table state for AI processing.
- * Includes positions (D, SB, BB), stacks, and detailed betting info.
- */
-function formatTableState(state: GameState) {
-  const { players, dealerIndex, currentRound, communityCards, pot, currentHighestBet, handHistory } = state;
-  const numPlayers = players.length;
+
+function buildCompressedGameState(state: GameState, heroId?: string) {
+  const gameStageMap: Record<string, string> = {
+    'PREFLOP': 'preflop',
+    'FLOP': 'flop',
+    'TURN': 'turn',
+    'RIVER': 'river',
+    'SHOWDOWN': 'river'
+  };
   
-  const sbIndex = (dealerIndex + 1) % numPlayers;
-  const bbIndex = (dealerIndex + 2) % numPlayers;
+  const stage = gameStageMap[state.currentRound] || 'preflop';
+  
+  // Dynamic Trimming
+  let actionHistory = [...state.handHistory];
+  if (stage === 'preflop') {
+    actionHistory = actionHistory.slice(-8); // last 6-8 actions preflop
+  } else {
+    actionHistory = actionHistory.slice(-6); // last ~4-6 actions postflop
+  }
 
-  const playerTable = players.map((p, i) => {
-    let posLabel = "  ";
-    if (i === dealerIndex) posLabel = " D";
-    if (i === sbIndex) posLabel = "SB";
-    if (i === bbIndex) posLabel = "BB";
-    
-    const status = p.hasFolded ? "[FOLDED]" : p.isAllIn ? "[ALL-IN]" : "";
-    return `${posLabel} | ${p.name.padEnd(8)} | Stack: ${p.stack.toString().padEnd(5)} | Current Bet: ${p.currentBet} ${status}`;
-  }).join("\n");
+  const activePlayers = state.players.filter(p => !p.hasFolded);
+  const isMultiway = activePlayers.length > 2;
 
-  const boardStr = communityCards.length > 0 
-    ? communityCards.map(c => c.rank + c.suit.charAt(0)).join(" ") 
-    : "Empty (Pre-flop)";
+  // Effective stack: smallest stack among active players (or 0 if none)
+  const stacks = activePlayers.map(p => p.stack);
+  stacks.sort((a, b) => a - b);
+  const effectiveStack = stacks.length >= 2 ? stacks[0] : (stacks[0] || 0);
 
-  return `
-TABLE STATE:
-Round: ${currentRound}
-Board: [${boardStr}]
-Total Pot: ${pot}
-Highest Bet this round: ${currentHighestBet}
+  const heroIndex = state.players.findIndex(p => p.id === (heroId || 'hero'));
+  const heroPlayer = state.players[heroIndex] || state.players[0];
 
-PLAYERS:
-Pos | Name     | Status
------------------------
-${playerTable}
+  const toCall = state.currentHighestBet - heroPlayer.currentBet;
+  const potOdds = toCall > 0 ? (toCall / (state.pot + toCall)) : 0;
+  const stackToPotRatio = state.pot > 0 ? (effectiveStack / state.pot) : 0;
 
-RECENT LOGS:
-${handHistory.slice(-15).join("\n")}
-`;
+  // Derive Positions
+  const getPosition = (index: number) => {
+    if (state.players.length === 2) {
+      return index === state.dealerIndex ? 'BTN' : 'BB';
+    }
+    if (index === state.dealerIndex) return 'BTN';
+    if (index === (state.dealerIndex + 1) % state.players.length) return 'SB';
+    if (index === (state.dealerIndex + 2) % state.players.length) return 'BB';
+    if (index === (state.dealerIndex + 3) % state.players.length) return 'UTG';
+    return 'MP'; 
+  };
+
+  const payload = {
+    game_stage: stage,
+    pot_size: state.pot,
+    current_bet: state.currentHighestBet,
+    players: state.players.map((p, i) => ({
+      id: p.id,
+      stack: p.stack,
+      position: getPosition(i),
+      has_folded: p.hasFolded,
+      is_all_in: p.isAllIn,
+      last_bet_size: p.currentBet,
+      last_action: p.hasFolded ? "fold" : p.isAllIn ? "all-in" : (p.currentBet > 0 ? "bet/call" : "check") // Approximate if no specific action tracked
+    })),
+    hero: {
+      cards: heroPlayer.cards.map(c => c.rank + c.suit.charAt(0)),
+      stack: heroPlayer.stack,
+      position: getPosition(heroIndex)
+    },
+    community_cards: state.communityCards.map(c => c.rank + c.suit.charAt(0)),
+    action_history: actionHistory,
+    num_active_players: activePlayers.length,
+    table_type: "cash",
+    blinds: {
+      small_blind: 0.5,
+      big_blind: 1
+    },
+    derived_features: {
+      pot_odds: parseFloat(potOdds.toFixed(2)),
+      effective_stack: effectiveStack,
+      stack_to_pot_ratio: parseFloat(stackToPotRatio.toFixed(2)),
+      is_multiway: isMultiway
+    }
+  };
+
+  return JSON.stringify(payload, null, 2);
 }
 
-/**
- * Returns a bot's decision (action and amount) based on the current game state.
- * Falls back to local heuristic AI if both Gemini calls fail.
- */
 export async function getBotDecision(
   state: GameState,
   botIndex: number
@@ -106,66 +147,98 @@ export async function getBotDecision(
 
   const toCall = state.currentHighestBet - bot.currentBet;
   
-  const difficultyPrompts = {
-    'Easy': 'You are a loose-passive beginner. Play for fun, don\'t be too aggressive. You often make mistakes.',
-    'Medium': 'You are a skilled TAG (Tight-Aggressive) bot. Play solid, disciplined poker.',
-    'Hard': 'You are a world-class GTO poker professional. Play optimally and exploit every weakness of your opponents.'
+  const botProfiles = {
+    'Easy': {
+      "style": "balanced",
+      "bluff_frequency": 0.4,
+      "fold_threshold": "low",
+      "risk_tolerance": "high"
+    },
+    'Medium': {
+      "style": "tight",
+      "bluff_frequency": 0.1,
+      "fold_threshold": "high",
+      "risk_tolerance": "low"
+    },
+    'Hard': {
+      "style": "aggressive",
+      "bluff_frequency": 0.2,
+      "fold_threshold": "medium",
+      "risk_tolerance": "controlled"
+    }
   };
 
-  const tableContext = formatTableState(state);
-  const prompt = `System: ${difficultyPrompts[state.difficulty as keyof typeof difficultyPrompts] || difficultyPrompts.Medium}
-  
-You are an expert poker bot. Decide your NEXT move.
-STRATEGIC NOTE: If opponents only called the pre-flop 1BB/2BB blinds (limping), do not assume they have strong hands. Small call amounts indicate marginal/weak ranges.
+  const profile = botProfiles[state.difficulty as keyof typeof botProfiles] || botProfiles.Medium;
+  const gameStateJson = buildCompressedGameState(state, bot.id);
 
-${tableContext}
+  const prompt = `System Instruction:
+You are a professional poker player making a decision in a real game.
 
-YOUR INFO:
-Player Name: ${bot.name}
-Your Hand: ${bot.cards.map(c => c.rank + c.suit.charAt(0)).join(" ")}
-Stack: ${bot.stack} | Your current bet this street: ${bot.currentBet} | Amount to CALL: ${toCall}
+Goals:
+- Make the MOST +EV practical move
+- Avoid unnecessary complexity or GTO jargon
+- Adapt to multi-player pots (not heads-up only)
+- Consider position, pot odds, and player count
+- You are acting as the player identified as "hero" in the state
 
-INSTRUCTION:
-Respond with ONLY a JSON object. 
-Format: {"action":"FOLD"|"CHECK"|"CALL"|"RAISE","amount":number}`;
+Bot Profile (Adhere to this style):
+${JSON.stringify(profile, null, 2)}
+
+Game State Snapshot:
+${gameStateJson}
+
+Output STRICTLY in JSON:
+{
+  "action": "fold | call | raise | check | bet",
+  "bet_size": number,
+  "reason": "Short, clear explanation in simple language (max 2 sentences)"
+}
+
+Rules:
+- NO theory explanations
+- NO long reasoning
+- NO disclaimers
+- Be decisive`;
 
   try {
     const text = await callGemini(prompt, {
       responseMimeType: "application/json",
-      maxOutputTokens: 150,
-      temperature: 0.1,
+      maxOutputTokens: 200,
+      temperature: 0.2,
     });
 
     if (text) {
       console.log(`AI Success - BOT DECISION`);
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+      const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
          const json = JSON.parse(jsonMatch[0]);
-         // Sanitize 
+         
+         if (json.action.toUpperCase() === "BET") json.action = "RAISE";
+         json.action = json.action.toUpperCase();
+
          if (json.action === "CALL" && toCall === 0) json.action = "CHECK";
          if (json.action === "CHECK" && toCall > 0) json.action = "FOLD";
          if (json.action === "RAISE") {
            const minTotal = state.currentHighestBet + state.minRaise;
-           if (!json.amount || json.amount < minTotal) json.amount = minTotal;
+           json.amount = json.bet_size || minTotal;
+           if (json.amount < minTotal) json.amount = minTotal;
            const maxPossible = bot.stack + bot.currentBet;
            if (json.amount > maxPossible) json.amount = maxPossible;
+         } else {
+             delete json.amount;
          }
-         return json;
+         return { action: json.action, amount: json.amount };
       }
     }
   } catch (error: any) {
     console.error(`Gemini Bot Decision Error:`, error.message);
   }
 
-  // Tier 3: Local Heuristic AI (No API required)
   console.log("FALLBACK: Using local PokerAI engine for bot decision.");
   return PokerAI.decideAction(state, botIndex);
 }
 
-/**
- * Provides coaching feedback for the Hero's action.
- * Falls back to local heuristics if API fails.
- */
 export async function getCoachFeedback(
   stateSnapshot: GameState,
   action: string,
@@ -174,56 +247,69 @@ export async function getCoachFeedback(
   const hero = stateSnapshot.players.find(p => p.id === "hero");
   if (!hero) return "Waiting for your action...";
 
-  const toCall = stateSnapshot.currentHighestBet - hero.currentBet;
   const actionStr = action === "RAISE" ? `RAISED to ${amount}` : action;
-  const tableContext = formatTableState(stateSnapshot);
-
-  // Eliminate Hand Hallucination by telling it exactly what hand the user has
+  
   let actualHand = "High Card";
   try {
      const evalResult = PokerEvaluator.evaluate(hero.cards, stateSnapshot.communityCards);
      actualHand = evalResult.name;
   } catch(e) {}
 
-  const prompt = `You are a friendly, expert Poker Coach. Your student (HERO) just made a move.
-  
-${tableContext}
+  const gameStateJson = buildCompressedGameState(stateSnapshot, hero.id);
 
-STUDENT ACTION: 
-${hero.name} just chose to: ${actionStr}
-Student hand: ${hero.cards.map(c => c.rank + c.suit.charAt(0)).join(" ")}
-ACTUAL HAND STRENGTH: ${actualHand}
+  const prompt = `System Instruction:
+You are a poker coach helping a beginner improve.
 
-CRITICAL RULES FOR ADVICE:
-1. Do NOT guess what hand the student has. The student explicitly holds: ${actualHand}. Base your advice on this exact hand strength.
-2. If opponents only called pre-flop small blinds ($1 or $2 stakes), they are just limping. Calling the minimum bet does NOT suggest they have a good hand. Do not give them undue credit for basic calls.
+Goals:
+- Evaluate the player’s last move
+- Give clear, practical advice
+- Avoid jargon like "GTO", "range merging", etc.
 
-TASK:
-Provide a 2-3 sentence strategic critique of the student's move. 
-- Use simple, conversational English.
-- Explain the "WHY" behind your advice based on the positions and historical bets.
-- Avoid fancy jargon like "GTO", "Capped Range", or "Polarized" unless you define them simply.
-- Focus on hand strength versus what opponents might be holding based on their actions.
-- Keep it under 400 characters.`;
+Student Action:
+The student chose to: ${actionStr}
+Actual Hand Strength (IMPORTANT): ${actualHand}
+
+Game State Snapshot:
+${gameStateJson}
+
+Output STRICTLY in JSON:
+{
+  "verdict": "good | okay | bad",
+  "better_action": "fold | call | raise | check | bet",
+  "explanation": "Explain in simple, everyday language (max 3 sentences)",
+  "key_mistake": "One specific mistake (if any)",
+  "tip": "One actionable improvement tip"
+}
+
+Rules:
+- Be specific to THIS hand only
+- Do NOT give generic advice
+- Reference actual cards, pot, and actions
+- Keep it concise
+- Do NOT guess what hand the student has. Base your advice on the provided Actual Hand Strength.`;
 
   try {
     const text = await callGemini(prompt, { 
-      maxOutputTokens: 500, 
-      temperature: 0.7     
+      responseMimeType: "application/json",
+      maxOutputTokens: 300, 
+      temperature: 0.4
     });
 
-    if (text) return text.trim();
+    if (text) {
+       const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+       const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+       if (jsonMatch) {
+          const json = JSON.parse(jsonMatch[0]);
+          return `**Verdict: ${json.verdict.toUpperCase()}**\n\n${json.explanation}\n\n*Mistake:* ${json.key_mistake || 'None'}\n*Tip:* ${json.tip}`;
+       }
+    }
   } catch (error: any) {
     console.error(`Coach AI Error:`, error.message);
   }
 
-  // Tier 3: Local Heuristic Fallback
   return getLocalCoachFeedback(stateSnapshot, action, amount);
 }
 
-/**
- * Local strategic heuristic for when API is unavailable.
- */
 function getLocalCoachFeedback(state: any, action: string, amount?: number): string {
   const hero = state.players.find((p: any) => p.id === "hero");
   if (!hero) return "Analyzing the table dynamics...";
@@ -232,20 +318,20 @@ function getLocalCoachFeedback(state: any, action: string, amount?: number): str
   const isHighStakes = (amount || 0) > state.pot * 0.5 || toCall > state.pot * 0.2;
 
   if (action === "FOLD" && state.currentHighestBet < 5) {
-     return "Aggressive fold. You dropped out with almost zero pressure—usually, it's worth seeing a flop with most hands for only 1 or 2 BB.";
+     return "**Verdict: OKAY**\nAggressive fold. You dropped out with almost zero pressure—usually, it's worth seeing a flop with most hands for only 1 or 2 BB.";
   }
   
   if (action === "RAISE" && isHighStakes) {
-     return `Sizable raise. By betting ${amount} BB, you're putting significant pressure on the table. This is a strong Value bet if you have a top-tier hand, or a bold BLUFF otherwise.`;
+     return `**Verdict: OKAY**\nSizable raise. By betting ${amount} BB, you're putting significant pressure on the table.`;
   }
 
   if (action === "CALL" && toCall > 50) {
-     return "That's a wide call. Ensure your pot odds justify the draw, otherwise, standard GTO recommends folding to such large bets unless you have top pair or better.";
+     return "**Verdict: BAD**\nThat's a wide call. Ensure your pot odds justify the draw.";
   }
 
   if (action === "CHECK") {
-     return "Solid check. You're maintaining the pot size and keeping your ranges balanced. A classic move for protection or pot control.";
+     return "**Verdict: GOOD**\nSolid check. You're maintaining the pot size and keeping your ranges balanced.";
   }
 
-  return "Gemini API quota exhausted. Continuing with Local Heuristic Coach: Play disciplined Tight-Aggressive poker.";
+  return "**Verdict: OKAY**\nAPI quota exhausted. Local heuristic active: play disciplined poker.";
 }
